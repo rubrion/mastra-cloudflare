@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mastra-d1-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-01",
+  // nodejs_compat: Mastra core needs Node built-ins.
+  // nodejs_compat_populate_process_env: maps vars/secrets into process.env so
+  // the model router picks up OPENAI_API_KEY / OPENAI_BASE_URL on Workers.
+  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env"],
+  "observability": { "enabled": true },
+  "vars": {
+    // Mastra model-router id. Override per-environment. Point OPENAI_BASE_URL
+    // (a secret/var) at any OpenAI-compatible endpoint to use a custom model.
+    "MODEL": "openai/gpt-4o-mini"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mastra-d1-agent",
+      // Run `wrangler d1 create mastra-d1-agent` and paste the id here.
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ]
+}

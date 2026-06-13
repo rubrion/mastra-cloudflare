@@ -1,0 +1,9 @@
+node_modules
+dist
+.mastra
+.wrangler
+.dev.vars
+.env
+*.log
+test-results
+playwright-report

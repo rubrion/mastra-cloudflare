@@ -1,0 +1,7 @@
+# Copy to .dev.vars (gitignored) for local dev, or set as Worker secrets in
+# production via `wrangler secret put`.
+#
+# Any OpenAI-compatible endpoint works (OpenAI, a self-hosted LiteLLM/vLLM/
+# Ollama proxy, etc.). Leave OPENAI_BASE_URL unset to use OpenAI directly.
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://your-openai-compatible-endpoint.example/v1
