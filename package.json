@@ -3,8 +3,13 @@
   "description": "AI agent built with the Mastra framework, with conversation memory persisted in D1.",
   "cloudflare": {
     "label": "Mastra AI Agent + D1 Memory",
-    "products": ["Workers", "D1"],
-    "categories": ["ai"],
+    "products": [
+      "Workers",
+      "D1"
+    ],
+    "categories": [
+      "ai"
+    ],
     "docs_url": "https://mastra.ai/docs",
     "preview_image_url": "REPLACE_WITH_16x9_PREVIEW_IMAGE_URL",
     "preview_icon_url": "REPLACE_WITH_16x9_SVG_ICON_URL",
@@ -27,13 +32,17 @@
     "@mastra/core": "^1.42.0",
     "@mastra/hono": "^1.4.25",
     "@mastra/memory": "^1.20.3",
+    "@opentelemetry/api": "^1.9.0",
     "hono": "^4.12.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250101.0",
+    "@cloudflare/workers-types": "^5.20260908.1",
     "@playwright/test": "^1.50.0",
     "typescript": "^5.9.3",
     "wrangler": "^4.84.0"
+  },
+  "overrides": {
+    "@cloudflare/workers-types": "^5.20260908.1"
   }
 }

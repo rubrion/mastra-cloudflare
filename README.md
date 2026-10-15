@@ -85,13 +85,32 @@ swap it for your own auth.
 
 ## Notes
 
-- `nodejs_compat` + `nodejs_compat_populate_process_env` compatibility flags are
-  required: Mastra core uses Node built-ins, and the model router reads
-  `OPENAI_*` from `process.env`.
+- **`new_module_registry` is required.** `@mastra/server` calls
+  `createRequire(import.meta.url)` while its workflow handlers initialise, and
+  `import.meta.url` is undefined in a Worker bundle under the old module
+  registry — so the Worker throws during module evaluation and never serves a
+  request (`The argument 'path' … Received 'undefined'`). The
+  [new module registry ↗](https://blog.cloudflare.com/workers-module-registry-nodejs/)
+  resolves specifiers as URLs, which makes `import.meta.url` real. Raising the
+  compatibility date alone does not fix it.
+- **No `nodejs_compat` flags needed.** `nodejs_compat` and `nodejs_compat_v2`
+  are on by default from compatibility date `2026-08-04`, and `process.env`
+  auto-populates from `2025-04-01` — which is how the model router finds
+  `OPENAI_API_KEY`. Both are omitted here rather than carried as no-ops.
+- **`@opentelemetry/api` is a direct dependency.** `posthog-node` arrives
+  transitively through Mastra and imports it dynamically; without it the build
+  fails to resolve.
+- **`overrides` pins `@cloudflare/workers-types`.** wrangler peers v5 and
+  `@mastra/cloudflare-d1` peers v4, so a plain `npm install` stops at
+  `ERESOLVE`. Types are compile-time only and `D1Database` is unchanged
+  between them.
 - To add agents, tools, or workflows, create them under `src/mastra/` and
   register them on the `Mastra` instance in `src/mastra/index.ts`.
 - No Mastra-level `storage` is set: it would init in global scope, where
   Workers disallow async I/O. The agent owns a lazily-built `Memory` that
-  inits D1 on first request instead.
-- **Bundle size:** Mastra core is large (~5 MB gzip). That exceeds the Workers
-  **Free** plan limit (3 MiB); deploy on the **Standard/paid** plan (10 MiB).
+  inits D1 on first request instead. Mastra logs a warning at boot about
+  falling back to an in-memory store — that is this choice, not a
+  misconfiguration; the agent's own memory is D1-backed.
+- **Bundle size:** Mastra core is large (~5.9 MB gzip). That exceeds the
+  Workers **Free** plan limit (3 MiB); deploy on the **Standard/paid** plan
+  (10 MiB).
