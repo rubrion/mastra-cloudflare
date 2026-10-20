@@ -1,22 +1,13 @@
-// Worker entry. Mounts the Mastra server onto a Hono app and exports it as
-// the Worker's fetch handler. Mastra's REST API (agents, tools, memory,
-// streaming) is then served under /api/* — browse /api at runtime.
-import { Hono } from "hono";
-import { HonoBindings, HonoVariables, MastraServer } from "@mastra/hono";
+// @rubrion/mastra-cloudflare: Mastra agents on Cloudflare Workers.
+export { d1Memory, type D1MemoryOptions } from './memory.js';
+export { openAICompatible, providerModel, workersAI, workersAIOptions, PROVIDER, DEFAULT_MODEL, type AiBinding, type Model, type ProviderConfig } from './models.js';
+export { buildAgent, defineAgents, type AgentRegistry, type AgentSpec, type AgentsOptions } from './agents.js';
+export { createAgentServer, HEADERS, type AgentServerOptions } from './server.js';
+export { plannerAgent, RoutingPlanSchema, type RoutingPlan } from './routing.js';
 
-import { mastra } from "./mastra";
-
-const app = new Hono<{ Bindings: HonoBindings; Variables: HonoVariables }>();
-
-const server = new MastraServer({
-  app,
-  mastra,
-  // Stateless mode — required on serverless runtimes like Cloudflare Workers.
-  mcpOptions: { serverless: true },
-});
-
-// Top-level await is supported in Workers module syntax. init() registers
-// Mastra's context middleware and all agent/tool/memory routes onto `app`.
-await server.init();
-
-export default app;
+// So a project needs only this package to define agents and tools.
+export { Agent } from '@mastra/core/agent';
+export { Mastra } from '@mastra/core/mastra';
+export { RequestContext } from '@mastra/core/request-context';
+export { createTool } from '@mastra/core/tools';
+export { z } from 'zod';
