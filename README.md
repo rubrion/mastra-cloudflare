@@ -54,7 +54,9 @@ curl -N http://localhost:8787/v1/chat/completions -H "Authorization: Bearer $API
 
 ## Server
 
-`createAgentServer({ agents, name?, apiKey?, provider?, planner?, maxSteps? })` returns `{ fetch(request, env) }`.
+`createAgentServer({ agents, name?, apiKey?, provider?, planner?, maxSteps?, maxAgents? })` returns `{ fetch(request, env) }`. `maxSteps` (tool rounds per reply, default 5) and `maxAgents` (how many agents `auto` may split a request across, default 3) take a number or `(env) => number`.
+
+Replies carry OpenAI's `usage` (prompt, completion and total tokens over the planner, every agent and every tool round): in the JSON body, or on the final chunk when streaming.
 
 | Route | |
 |---|---|

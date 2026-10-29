@@ -1,6 +1,6 @@
 {
   "name": "@rubrion/mastra-cloudflare",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mastra agents on Cloudflare Workers: D1 memory, Workers AI and OpenAI-compatible models, and an OpenAI-compatible agent server with multi-agent routing.",
   "license": "GPL-3.0-only",
   "author": "Rubrion",

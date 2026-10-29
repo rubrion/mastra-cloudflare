@@ -40,9 +40,14 @@ export interface AgentServerOptions<T extends AgentSpec, E> {
 	defaultModel?: (env: E) => Model;
 	/** "auto" routing; false turns it off. The planner uses the request's provider unless given a model. */
 	planner?: false | { model?: (requestContext: RequestContext) => Model; rules?: string };
-	/** Tool-call rounds per reply. */
-	maxSteps?: number;
+	/** Tool-call rounds per reply (default 5); a function to set it per environment. */
+	maxSteps?: number | ((env: E) => number);
+	/** Most agents "auto" may split a request across (default 3; 1 to never split). */
+	maxAgents?: number | ((env: E) => number);
 }
+
+type Usage = { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+type ModelUsage = { inputTokens?: number; outputTokens?: number } | undefined;
 
 type Input = { role: 'system' | 'user' | 'assistant'; content: unknown };
 type Body = { model?: string; messages?: ChatMessage[]; stream?: boolean };
@@ -64,7 +69,8 @@ function toInput(messages: ChatMessage[]): Input[] {
 }
 
 export function createAgentServer<T extends AgentSpec, E = unknown>(options: AgentServerOptions<T, E>) {
-	const { agents, name = 'agents', maxSteps = 5 } = options;
+	const { agents, name = 'agents' } = options;
+	const setting = (v: number | ((env: E) => number) | undefined, env: E, fallback: number) => (typeof v === 'function' ? v(env) : (v ?? fallback));
 	let planner: ReturnType<typeof plannerAgent> | undefined;
 	const plannerOf = () => (planner ??= plannerAgent(options.planner ? options.planner.model : undefined, options.planner ? options.planner.rules : undefined));
 
@@ -107,6 +113,15 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 			if (requested !== 'auto' && !candidates.some((s) => s.id === requested)) return fail(404, `Unknown model ${requested}`, 'model_not_found');
 
 			agents.mastra();
+			const maxSteps = setting(options.maxSteps, env, 5);
+			const maxAgents = setting(options.maxAgents, env, 3);
+			// Tokens over the planner, every agent and every tool round: returned as OpenAI's `usage`.
+			const usage: Usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+			const count = (u: ModelUsage) => {
+				usage.prompt_tokens += u?.inputTokens ?? 0;
+				usage.completion_tokens += u?.outputTokens ?? 0;
+				usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
+			};
 			const requestContext = new RequestContext();
 			const provider: ProviderConfig | undefined =
 				h.get(HEADERS.baseURL) && h.get(HEADERS.model)
@@ -162,7 +177,8 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 						structuredOutput: { schema: RoutingPlanSchema, jsonPromptInjection: true },
 						modelSettings: { temperature: 0 },
 					} as never);
-					plan = sanitizePlan((out as { object?: unknown }).object as never, new Set(candidates.map((s) => s.id)));
+					count((out as { totalUsage?: ModelUsage }).totalUsage);
+					plan = sanitizePlan((out as { object?: unknown }).object as never, new Set(candidates.map((s) => s.id)), maxAgents);
 				} catch (e) {
 					console.log('[agent-server] planner failed:', String(e));
 				}
@@ -182,6 +198,7 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 						const run = call(spec, steer);
 						try {
 							const out = await run.agent.generate(run.input, run.options);
+							count((out as { totalUsage?: ModelUsage }).totalUsage);
 							return { name: spec.name, text: out.text ?? '' };
 						} catch (e) {
 							console.log(`[agent-server] ${spec.id} failed:`, String(e));
@@ -199,7 +216,9 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 				else {
 					const run = call(slices[0].spec);
 					try {
-						text = (await run.agent.generate(run.input, run.options)).text ?? '';
+						const out = await run.agent.generate(run.input, run.options);
+						count((out as { totalUsage?: ModelUsage }).totalUsage);
+						text = out.text ?? '';
 					} catch (e) {
 						console.log(`[agent-server] ${slices[0].spec.id} failed:`, String(e));
 						return json({ error: { message: (e as Error).message, type: 'upstream_error', code: 'agent_failed' } }, 502);
@@ -211,6 +230,7 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 					created,
 					model,
 					choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+					usage,
 				});
 			}
 
@@ -218,7 +238,11 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 			const writer = writable.getWriter();
 			const enc = new TextEncoder();
 			const send = (delta: Record<string, unknown>, finish: string | null = null) =>
-				writer.write(enc.encode(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`));
+				writer.write(
+					enc.encode(
+						`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta, finish_reason: finish }], ...(finish ? { usage } : {}) })}\n\n`,
+					),
+				);
 
 			// Not awaited: the response goes out while this keeps writing into it.
 			void (async () => {
@@ -233,6 +257,7 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 							if (chunk.type === 'text-delta' && chunk.payload?.text) await send({ content: String(chunk.payload.text) });
 							if (chunk.type === 'error') throw chunk.payload?.error instanceof Error ? chunk.payload.error : new Error(String(chunk.payload?.error ?? 'error'));
 						}
+						count(await (out as { totalUsage?: Promise<ModelUsage> }).totalUsage?.catch(() => undefined));
 					}
 					await send({}, 'stop');
 				} catch (e) {

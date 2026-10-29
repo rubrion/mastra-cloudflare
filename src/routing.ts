@@ -49,8 +49,8 @@ export function plannerAgent(model?: (requestContext: RequestContext) => Model, 
 export const candidatesJson = (specs: AgentSpec[]) => JSON.stringify(specs.map((s) => ({ id: s.id, name: s.name, description: s.description })));
 
 /** Keep a model-made plan to known agents; null when nothing usable is left. */
-export function sanitizePlan(plan: RoutingPlan | null | undefined, ids: Set<string>): RoutingPlan | null {
-	const slices = (plan?.slices ?? []).filter((s) => s && ids.has(s.agent)).slice(0, 3);
+export function sanitizePlan(plan: RoutingPlan | null | undefined, ids: Set<string>, max = 3): RoutingPlan | null {
+	const slices = (plan?.slices ?? []).filter((s) => s && ids.has(s.agent)).slice(0, Math.max(1, Math.min(max, 3)));
 	return slices.length ? { slices } : null;
 }
 
