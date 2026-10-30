@@ -12,6 +12,8 @@ export interface ProviderConfig {
 	model: string;
 	/** Shown in Mastra's logs; defaults to "provider". */
 	name?: string;
+	/** Extra headers on every call, e.g. who is asking when the endpoint is another agent server. */
+	headers?: Record<string, string>;
 }
 
 /** The request-context key the server stores the request's provider under. */
@@ -23,7 +25,7 @@ export const DEFAULT_MODEL = 'default-model';
 export type Model = LanguageModelV4;
 
 export const openAICompatible = (config: ProviderConfig): Model =>
-	createOpenAICompatible({ name: config.name ?? 'provider', baseURL: config.baseURL.replace(/\/+$/, ''), apiKey: config.apiKey }).chatModel(config.model);
+	createOpenAICompatible({ name: config.name ?? 'provider', baseURL: config.baseURL.replace(/\/+$/, ''), apiKey: config.apiKey, headers: config.headers }).chatModel(config.model);
 
 /**
  * The model of the request's provider (see `PROVIDER`), else `fallback`, else

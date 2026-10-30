@@ -93,6 +93,7 @@ interface AgentSpec {
 
 ```ts
 openAICompatible({ baseURL, apiKey, model }); // OpenAI, OpenRouter, LiteLLM, vLLM, Ollama, another agent server…
+openAICompatible({ baseURL, apiKey, model, headers: { 'X-Person': id } }); // extra headers on every call
 workersAI(env.AI, '@cf/google/gemma-4-26b-a4b-it', { thinking: true }); // with providerOptions: workersAIOptions(true)
 providerModel(requestContext, fallback?); // the provider the request carries
 ```
