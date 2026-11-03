@@ -91,9 +91,11 @@ export interface JobToolsOptions<S extends z.ZodObject> {
 	/** What the job does, for the model (the start tool's description). */
 	description: string;
 	input: S;
-	workflow: (ctx: ToolCtx) => WorkflowLike<z.infer<S> & { owner: string }>;
+	workflow: (ctx: ToolCtx) => WorkflowLike<z.infer<S> & { owner: string } & Record<string, unknown>>;
 	/** Who asked: only they can check the job. */
 	owner: (ctx: ToolCtx) => string;
+	/** More for the Workflow from the request, beside the model's input (e.g. whose credit to charge). */
+	params?: (ctx: ToolCtx) => Record<string, unknown>;
 	/** How long check waits for the job to finish before answering "still running". */
 	waitMs?: number;
 	guard?: (ctx: ToolCtx, input: z.infer<S>) => Promise<string | void> | string | void;
@@ -124,7 +126,7 @@ export function jobTools<S extends z.ZodObject>(o: JobToolsOptions<S>) {
 			if (refused) return { error: refused };
 			const owner = o.owner(ctx);
 			const id = `${await tag(owner)}-${crypto.randomUUID()}`;
-			await o.workflow(ctx).create({ id, params: { ...args, owner } });
+			await o.workflow(ctx).create({ id, params: { ...o.params?.(ctx), ...args, owner } });
 			await o.started?.(ctx, args, id);
 			return { job: id, status: 'running' };
 		},

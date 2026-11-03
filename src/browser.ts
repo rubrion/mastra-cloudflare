@@ -4,6 +4,7 @@
 // first use, not at startup.
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { clip, publicUrl, type Allow, type ToolCtx } from './tools.js';
 
 export interface PageText {
@@ -43,7 +44,7 @@ const EXTRACT = `(() => {
  * images, media and fonts are skipped. `ms` is how long the browser was open:
  * what Browser Run bills.
  */
-export async function readPages(binding: Fetcher, urls: string[], o: ReadPagesOptions = {}) {
+export async function readPages(binding: BrowserWorker, urls: string[], o: ReadPagesOptions = {}) {
 	const { default: puppeteer } = await import('@cloudflare/puppeteer');
 	const began = Date.now();
 	const browser = await puppeteer.launch(binding);
@@ -89,7 +90,8 @@ export async function readPages(binding: Fetcher, urls: string[], o: ReadPagesOp
 }
 
 export interface BrowseOptions extends ReadPagesOptions {
-	browser: (ctx: ToolCtx) => Fetcher;
+	/** The `browser` binding. */
+	browser: (ctx: ToolCtx) => BrowserWorker;
 	id?: string;
 	description?: string;
 	/** Pages per call. */
