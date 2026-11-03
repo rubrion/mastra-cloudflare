@@ -19,7 +19,18 @@ export interface AgentSpec {
 	maxOutputTokens?: number;
 	/** Off when its configuration is missing (e.g. a key that isn't set). */
 	enabled?: () => boolean;
+	/**
+	 * What clients may send it besides text, listed in /v1/models so a chat can
+	 * offer it (rubry.ai shows the paperclip for `files`, and sends a document's
+	 * text). Leave out what the agent has no use for.
+	 */
+	capabilities?: Capability[];
+	/** Mastra input processors, e.g. `forgetResults([...])`. */
+	inputProcessors?: unknown[];
 }
+
+/** `files`: documents (sent as their text). `images`: pictures, for a vision model. */
+export type Capability = 'files' | 'images';
 
 export interface AgentsOptions {
 	/** Memory every agent shares (see `d1Memory`); without it agents are stateless. */
@@ -35,6 +46,7 @@ export function buildAgent(spec: AgentSpec, { memory }: AgentsOptions = {}) {
 		instructions: ({ requestContext }) => (typeof spec.instructions === 'function' ? spec.instructions({ requestContext }) : spec.instructions),
 		model: ({ requestContext }) => (spec.model ?? providerModel)(requestContext) as never,
 		tools: (spec.tools ?? {}) as never,
+		...(spec.inputProcessors?.length ? { inputProcessors: spec.inputProcessors as never } : {}),
 		...(memory ? { memory: () => memory() } : {}),
 	});
 }

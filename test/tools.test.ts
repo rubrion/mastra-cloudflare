@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clip, fileToMarkdown, jobTools, publicUrl, readFileTool, z, type MarkdownAi } from '../src/index';
+import { clip, createAgentServer, defineAgents, fileToMarkdown, jobTools, publicUrl, readFileTool, z, type FileText, type MarkdownAi } from '../src/index';
 
 const ctxOf = (values: Record<string, unknown>) => ({ requestContext: { get: (k: string) => values[k] } });
 
@@ -64,7 +64,7 @@ describe('read_file', () => {
 		expect(await tool.execute!({ file: 'mine' }, ctxOf({ broke: true }) as never)).toEqual({ error: 'No credit.' });
 		expect(await tool.execute!({ file: 'theirs' }, ctxOf({}) as never)).toEqual({ error: 'No such file in this conversation.' });
 		expect(await tool.execute!({ file: 'mine' }, ctxOf({}) as never)).toMatchObject({ markdown: '# Hi' });
-		expect(used).toEqual([{ name: 'a.pdf', tokens: 7, chars: 4 }]);
+		expect(used).toEqual([{ name: 'a.pdf', tokens: 7, chars: 4, cached: false }]);
 	});
 });
 
@@ -92,5 +92,43 @@ describe('jobTools', () => {
 		expect(runs.get(out.job)?.params).toEqual({ url: 'https://example.com', owner: 'ana' });
 		expect(await check.execute!({ job: out.job }, ctxOf({ who: 'ana' }) as never)).toEqual({ job: out.job, status: 'complete', result: { ok: 1 } });
 		expect(await check.execute!({ job: out.job }, ctxOf({ who: 'bob' }) as never)).toEqual({ error: 'No such job.' });
+	});
+});
+
+describe('read_file costs', () => {
+	it('converts a file once when given a cache', async () => {
+		let conversions = 0;
+		const counting: MarkdownAi = { toMarkdown: async ([f]) => (conversions++, [{ name: f.name, mimeType: 'application/pdf', format: 'markdown', tokens: 3, data: 'text' }]) };
+		const store = new Map<string, FileText>();
+		const tool = readFileTool({
+			ai: () => counting,
+			load: async () => ({ name: 'a.pdf', bytes: new Uint8Array([1]) }),
+			cache: { get: async (ref) => store.get(ref) ?? null, put: async (ref, text) => void store.set(ref, text) },
+		});
+		await tool.execute!({ file: 'k' }, ctxOf({}) as never);
+		expect(await tool.execute!({ file: 'k' }, ctxOf({}) as never)).toMatchObject({ markdown: 'text' });
+		expect(conversions).toBe(1);
+	});
+	it('asks Workers AI not to describe pictures, and refuses a picture', async () => {
+		let options: unknown;
+		const spy: MarkdownAi = { toMarkdown: async ([f], o) => ((options = o), [{ name: f.name, mimeType: 'application/pdf', format: 'markdown', tokens: 1, data: 'x' }]) };
+		await fileToMarkdown(spy, { name: 'a.pdf', bytes: new Uint8Array([1]) });
+		expect(options).toMatchObject({ conversionOptions: { pdf: { images: { convert: false } } } });
+		expect(await fileToMarkdown(spy, { name: 'photo.JPG', bytes: new Uint8Array([1]) })).toHaveProperty('error');
+		expect(await fileToMarkdown(spy, { name: 'scan', type: 'image/png', bytes: new Uint8Array([1]) })).toHaveProperty('error');
+		expect(await fileToMarkdown(spy, { name: 'photo.jpg', bytes: new Uint8Array([1]) }, 100, { images: true })).toHaveProperty('markdown');
+	});
+});
+
+describe('capabilities', () => {
+	it('lists what each agent takes in /v1/models, and auto takes their union', async () => {
+		const agents = defineAgents([
+			{ id: 'reader', name: 'Reader', description: 'Reads documents.', instructions: '.', capabilities: ['files'] },
+			{ id: 'plain', name: 'Plain', description: 'Talks.', instructions: '.' },
+		]);
+		const server = createAgentServer({ agents });
+		const res = await server.fetch(new Request('https://x/v1/models'), {} as never);
+		const { data } = (await res.json()) as { data: { id: string; capabilities?: string[] }[] };
+		expect(Object.fromEntries(data.map((m) => [m.id, m.capabilities]))).toEqual({ auto: ['files'], reader: ['files'], plain: undefined });
 	});
 });

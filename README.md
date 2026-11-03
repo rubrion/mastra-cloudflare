@@ -125,6 +125,18 @@ const crawl = jobTools({ name: 'crawl', description: 'Read a list of pages.', in
 
 Never point the browser at logins or captchas.
 
+`read_file` keeps costs where they belong: pictures (alone or inside documents) are not described by an AI model unless `images: true`, since Workers AI bills that; `cache: { get, put }` keeps the converted text (e.g. next to the file in R2) so a file is converted once; and `forgetResults(['read_file', 'browse'])` in an agent's `inputProcessors` sends a file's or page's text only with the turn that read it, not with every message after.
+
+### What an agent takes
+
+`capabilities` on a spec says what clients may send it besides text, and `/v1/models` lists it (`auto` takes what any agent takes). rubry.ai offers the paperclip only to an agent with `files`, and sends a document's text:
+
+```ts
+{ id: 'analyst', name: 'Analyst', description: '…', instructions: '…', capabilities: ['files'] }
+```
+
+Leave out what the agent has no use for: no `files`, no paperclip; no `browseTool`, no browser bundled or billed.
+
 ## Releases
 
 Every push to `main` is released by CI (`.github/workflows/release.yml`, semantic-release): commit messages follow [Conventional Commits](https://www.conventionalcommits.org), and `fix:` publishes a patch, `feat:` a minor, a breaking change (`feat!:` or a `BREAKING CHANGE:` footer) a major. `docs:`, `chore:`, `ci:`, `test:` and `refactor:` publish nothing. npm trusts the workflow (trusted publishing), so there is no token and each version carries provenance. The version lives in git tags (`v0.3.0`) and on npm, not in `package.json`.

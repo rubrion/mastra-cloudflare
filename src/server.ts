@@ -88,12 +88,22 @@ export function createAgentServer<T extends AgentSpec, E = unknown>(options: Age
 			if (request.method === 'GET' && url.pathname === '/') return json({ name, status: 'ok', agents: candidates.map((s) => s.id) });
 
 			if (request.method === 'GET' && url.pathname === '/v1/models') {
-				const model = (id: string, title: string, description: string) => ({ id, object: 'model', created: 0, owned_by: name, name: title, description });
+				const model = (id: string, title: string, description: string, capabilities: string[] = []) => ({
+					id,
+					object: 'model',
+					created: 0,
+					owned_by: name,
+					name: title,
+					description,
+					...(capabilities.length ? { capabilities } : {}),
+				});
+				// auto can route to any agent: it takes what at least one of them takes.
+				const all = [...new Set(candidates.flatMap((s) => s.capabilities ?? []))];
 				return json({
 					object: 'list',
 					data: [
-						...(routes ? [model('auto', 'Auto', 'Sends each message to the agent(s) best suited for it.')] : []),
-						...candidates.map((s) => model(s.id, s.name, s.description)),
+						...(routes ? [model('auto', 'Auto', 'Sends each message to the agent(s) best suited for it.', all)] : []),
+						...candidates.map((s) => model(s.id, s.name, s.description, s.capabilities)),
 					],
 				});
 			}

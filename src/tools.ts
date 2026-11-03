@@ -5,6 +5,7 @@
 // Every tool takes `guard` (checked before the work; return a message to refuse,
 // e.g. "not enough credit") and `used` (called after, with what the work cost),
 // so the app charges whoever asked rather than absorbing it.
+import { ToolCallFilter } from '@mastra/core/processors';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
@@ -16,7 +17,7 @@ export type Allow = (ctx: ToolCtx) => Promise<string | void> | string | void;
 
 /** The Workers AI binding's file conversion, as these tools use it. */
 export interface MarkdownAi {
-	toMarkdown(files: { name: string; blob: Blob }[]): Promise<({ name: string; mimeType: string } & ({ format: 'markdown'; tokens: number; data: string } | { format: 'error'; error: string }))[]>;
+	toMarkdown(files: { name: string; blob: Blob }[], options?: { conversionOptions?: Record<string, unknown> }): Promise<({ name: string; mimeType: string } & ({ format: 'markdown'; tokens: number; data: string } | { format: 'error'; error: string }))[]>;
 }
 
 export interface LoadedFile {
@@ -32,10 +33,23 @@ export function clip(text: string, max: number) {
 	return { text: text.slice(0, cut > max * 0.8 ? cut : max), truncated: true };
 }
 
-/** A file as Markdown (PDF, Office, spreadsheets, HTML, XML, images…), cut to `maxChars`. */
-export async function fileToMarkdown(ai: MarkdownAi, file: LoadedFile, maxChars = 20_000): Promise<FileText | { error: string }> {
+// Pictures go through an AI model (billed); text, documents and spreadsheets don't.
+const IMAGE = /^image\//;
+const IMAGE_NAME = /\.(png|jpe?g|webp|gif|bmp|tiff?|svg)$/i;
+const NO_IMAGES = { pdf: { images: { convert: false } }, docx: { images: { convert: false } }, html: { images: { convert: false } } };
+
+/** True for a picture: `fileToMarkdown` reads one only with `images: true`. */
+export const isImage = (file: Pick<LoadedFile, 'name' | 'type'>) => IMAGE.test(file.type ?? '') || IMAGE_NAME.test(file.name);
+
+/**
+ * A file as Markdown (PDF, Office, spreadsheets, HTML, XML…), cut to `maxChars`.
+ * Pictures, alone or inside documents, are described by an AI model that Workers
+ * AI bills: off unless `images` is true (a vision model reads a picture better anyway).
+ */
+export async function fileToMarkdown(ai: MarkdownAi, file: LoadedFile, maxChars = 20_000, { images = false } = {}): Promise<FileText | { error: string }> {
+	if (!images && isImage(file)) return { error: `${file.name} is a picture; this tool reads documents. Look at the image itself instead.` };
 	const blob = file.bytes instanceof Blob ? file.bytes : new Blob([file.bytes as ArrayBuffer], { type: file.type ?? 'application/octet-stream' });
-	const [out] = await ai.toMarkdown([{ name: file.name, blob }]);
+	const [out] = await ai.toMarkdown([{ name: file.name, blob }], images ? undefined : { conversionOptions: NO_IMAGES });
 	if (!out || out.format === 'error') return { error: `Could not read ${file.name}: ${out?.format === 'error' ? out.error : 'no result'}` };
 	const { text, truncated } = clip(out.data.trim(), maxChars);
 	return { name: file.name, type: out.mimeType, markdown: text, truncated, tokens: out.tokens };
@@ -56,8 +70,15 @@ export interface ReadFileOptions {
 	id?: string;
 	description?: string;
 	maxChars?: number;
+	/** Describe pictures with an AI model (billed by Workers AI). Off by default. */
+	images?: boolean;
+	/** Where converted text is kept, so a file is converted once (e.g. next to it in R2). */
+	cache?: {
+		get: (ref: string, ctx: ToolCtx) => Promise<FileText | null>;
+		put: (ref: string, text: FileText, ctx: ToolCtx) => Promise<void>;
+	};
 	guard?: Allow;
-	used?: (ctx: ToolCtx, usage: { name: string; tokens: number; chars: number }) => Promise<void> | void;
+	used?: (ctx: ToolCtx, usage: { name: string; tokens: number; chars: number; cached: boolean }) => Promise<void> | void;
 }
 
 /** `read_file`: the text of a file the user attached, for the model to work with. */
@@ -71,13 +92,29 @@ export const readFileTool = (o: ReadFileOptions) =>
 		execute: async ({ file }, ctx) => {
 			const refused = await o.guard?.(ctx);
 			if (refused) return { error: refused };
+			const kept = await o.cache?.get(file, ctx).catch(() => null);
+			if (kept) {
+				await o.used?.(ctx, { name: kept.name, tokens: kept.tokens, chars: kept.markdown.length, cached: true });
+				return kept;
+			}
 			const loaded = await o.load(file, ctx).catch(() => null);
 			if (!loaded) return { error: 'No such file in this conversation.' };
-			const out = await fileToMarkdown(o.ai(ctx), loaded, o.maxChars).catch((e: Error) => ({ error: `Could not read ${loaded.name}: ${e.message}` }) as const);
-			if ('markdown' in out) await o.used?.(ctx, { name: out.name, tokens: out.tokens, chars: out.markdown.length });
+			const out = await fileToMarkdown(o.ai(ctx), loaded, o.maxChars, { images: o.images }).catch((e: Error) => ({ error: `Could not read ${loaded.name}: ${e.message}` }) as const);
+			if ('markdown' in out) {
+				await o.cache?.put(file, out, ctx).catch(() => undefined);
+				await o.used?.(ctx, { name: out.name, tokens: out.tokens, chars: out.markdown.length, cached: false });
+			}
 			return out;
 		},
 	});
+
+/**
+ * Keeps these tools' results out of the prompt once their turn is over: a file's
+ * or a page's text is sent with the turn that read it, not with every message
+ * after (memory still stores it). The model calls the tool again if it needs it.
+ * For an agent's `inputProcessors`.
+ */
+export const forgetResults = (tools: string[]) => new ToolCallFilter({ exclude: tools });
 
 /** The Workflow binding, as the job tools use it. */
 export interface WorkflowLike<P> {
