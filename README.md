@@ -129,6 +129,14 @@ Never point the browser at logins or captchas.
 
 `read_file` keeps costs where they belong: pictures (alone or inside documents) are not described by an AI model unless `images: true`, since Workers AI bills that; `cache: { get, put }` keeps the converted text (e.g. next to the file in R2) so a file is converted once; and `forgetResults(['read_file', 'browse'])` in an agent's `inputProcessors` sends a file's or page's text only with the turn that read it, not with every message after.
 
+### Rubry's browser, on Rubry's model
+
+`gatewayBrowseTool({ fallback })` is `browse` through the caller's model provider: when a caller brings its model (X-Provider-* headers) and that provider offers a browser at `<baseURL>/tools/browse`, the pages open there and the caller's user pays. rubry.ai offers one for an agent run on Rubry's model (charged to the visitor's credit), so a published agent can browse without its author paying. Otherwise it runs `fallback` (e.g. `browseTool` on your own binding), or returns an error the model explains.
+
+```ts
+tools: { browse: gatewayBrowseTool({ fallback: browseTool({ browser: () => env.BROWSER }) }) }
+```
+
 ### What an agent takes
 
 `capabilities` on a spec says what clients may send it besides text, and `/v1/models` lists it (`auto` takes what any agent takes). rubry.ai offers the paperclip only to an agent with `files`, and sends a document's text:

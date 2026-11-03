@@ -8,6 +8,7 @@
 import { ToolCallFilter } from '@mastra/core/processors';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { PROVIDER, type ProviderConfig } from './models.js';
 
 /** What a tool's execute gets as its second argument, as far as these tools need. */
 export type ToolCtx = { requestContext?: { get(key: string): unknown } } | undefined;
@@ -115,6 +116,48 @@ export const readFileTool = (o: ReadFileOptions) =>
  * For an agent's `inputProcessors`.
  */
 export const forgetResults = (tools: string[]) => new ToolCallFilter({ exclude: tools });
+
+export interface GatewayBrowseOptions {
+	id?: string;
+	description?: string;
+	/** Used when the request's provider offers no browser: e.g. browseTool from ./browser, on your own binding. */
+	fallback?: { execute?: (input: never, ctx: never) => Promise<unknown> };
+}
+
+/**
+ * `browse` through the model provider's gateway: when a caller brings its model
+ * (X-Provider-* headers) and that provider offers a browser at `<baseURL>/tools/browse`
+ * (rubry.ai's does, for an agent run on Rubry's model), the caller's provider
+ * opens the pages and charges its user, so the agent's author pays nothing.
+ * Otherwise `fallback`, or an error the model can explain.
+ */
+export const gatewayBrowseTool = (o: GatewayBrowseOptions = {}) =>
+	createTool({
+		id: o.id ?? 'browse',
+		description:
+			o.description ??
+			'Open one or two public web pages in a real browser (pages that need JavaScript too) and read their text and links. Never for logins or captchas.',
+		inputSchema: z.object({ urls: z.array(z.string().url()).min(1).max(2).describe('Full http(s) addresses') }),
+		execute: async (input, ctx) => {
+			const provider = ctx?.requestContext?.get(PROVIDER) as ProviderConfig | undefined;
+			if (provider?.baseURL) {
+				const r = await fetch(`${provider.baseURL.replace(/\/+$/, '')}/tools/browse`, {
+					method: 'POST',
+					headers: { authorization: `Bearer ${provider.apiKey}`, 'content-type': 'application/json' },
+					body: JSON.stringify(input),
+					signal: AbortSignal.timeout(60_000),
+				}).catch(() => null);
+				if (r?.ok) return r.json();
+				// 404/405: this provider has no browser; anything else is its answer (e.g. no credit).
+				if (r && r.status !== 404 && r.status !== 405) {
+					const body = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;
+					return { error: body?.error?.message ?? `The browser answered ${r.status}.` };
+				}
+			}
+			if (o.fallback?.execute) return o.fallback.execute(input as never, ctx as never);
+			return { error: 'No browser here: it runs only when the chat brings a model that offers one (like Rubry’s). Tell the user.' };
+		},
+	});
 
 /** The Workflow binding, as the job tools use it. */
 export interface WorkflowLike<P> {

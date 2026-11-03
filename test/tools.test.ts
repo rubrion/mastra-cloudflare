@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clip, createAgentServer, defineAgents, fileToMarkdown, jobTools, publicUrl, readFileTool, z, type FileText, type MarkdownAi } from '../src/index';
+import { clip, createAgentServer, defineAgents, gatewayBrowseTool, PROVIDER, fileToMarkdown, jobTools, publicUrl, readFileTool, z, type FileText, type MarkdownAi } from '../src/index';
 
 const ctxOf = (values: Record<string, unknown>) => ({ requestContext: { get: (k: string) => values[k] } });
 
@@ -130,5 +130,29 @@ describe('capabilities', () => {
 		const res = await server.fetch(new Request('https://x/v1/models'), {} as never);
 		const { data } = (await res.json()) as { data: { id: string; capabilities?: string[] }[] };
 		expect(Object.fromEntries(data.map((m) => [m.id, m.capabilities]))).toEqual({ auto: ['files'], reader: ['files'], plain: undefined });
+	});
+});
+
+describe('gatewayBrowseTool', () => {
+	const calls: string[] = [];
+	const realFetch = globalThis.fetch;
+	const fake = (status: number, body: unknown) =>
+		(globalThis.fetch = (async (url: string, init: RequestInit) => (calls.push(`${url} ${(init.headers as Record<string, string>).authorization}`), new Response(JSON.stringify(body), { status }))) as never);
+	const withProvider = (baseURL?: string) => ctxOf(baseURL ? { [PROVIDER]: { baseURL, apiKey: 'rl_key', model: 'rubry' } } : {});
+
+	it('asks the caller\'s provider to browse, with its key', async () => {
+		fake(200, { pages: [{ url: 'https://example.com', text: 'hi' }] });
+		const out = await gatewayBrowseTool().execute!({ urls: ['https://example.com'] }, withProvider('https://rubry.ai/api/llm/v1/') as never);
+		expect(out).toEqual({ pages: [{ url: 'https://example.com', text: 'hi' }] });
+		expect(calls.at(-1)).toBe('https://rubry.ai/api/llm/v1/tools/browse Bearer rl_key');
+	});
+	it('falls back when the provider has no browser, and passes its refusal through', async () => {
+		fake(404, {});
+		const fallback = { execute: async () => ({ pages: ['own'] }) };
+		expect(await gatewayBrowseTool({ fallback }).execute!({ urls: ['https://example.com'] }, withProvider('https://api.openai.com/v1') as never)).toEqual({ pages: ['own'] });
+		expect(await gatewayBrowseTool().execute!({ urls: ['https://example.com'] }, withProvider() as never)).toHaveProperty('error');
+		fake(429, { error: { message: 'No Rubry credit left' } });
+		expect(await gatewayBrowseTool({ fallback }).execute!({ urls: ['https://example.com'] }, withProvider('https://rubry.ai/api/llm/v1') as never)).toEqual({ error: 'No Rubry credit left' });
+		globalThis.fetch = realFetch;
 	});
 });
