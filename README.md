@@ -85,6 +85,8 @@ interface AgentSpec {
 	tools?: Record<string, Tool>;
 	maxOutputTokens?: number;
 	enabled?: () => boolean; // off when its configuration is missing
+	capabilities?: ('files' | 'images')[]; // listed in /v1/models: what a chat may send it (see Tools)
+	inputProcessors?: Processor[]; // Mastra processors, e.g. forgetResults(['browse'])
 }
 ```
 
