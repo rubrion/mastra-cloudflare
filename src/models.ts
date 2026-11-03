@@ -4,6 +4,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 import type { RequestContext } from '@mastra/core/request-context';
 import { createWorkersAI } from 'workers-ai-provider';
+import { withoutChannels } from './channels.js';
 
 /** An OpenAI-compatible provider: OpenAI, OpenRouter, a LiteLLM/vLLM/Ollama proxy, another agent server. */
 export interface ProviderConfig {
@@ -62,7 +63,7 @@ export function workersAI(binding: AiBinding, model: string, { thinking }: { thi
 			return binding.run(m, { ...(thinking ? rest : inputs), chat_template_kwargs: kwargs }, options);
 		},
 	};
-	return createWorkersAI({ binding: ai as unknown as Ai })(model as Parameters<ReturnType<typeof createWorkersAI>>[0]) as unknown as Model;
+	return withoutChannels(createWorkersAI({ binding: ai as unknown as Ai })(model as Parameters<ReturnType<typeof createWorkersAI>>[0]) as unknown as Model);
 }
 
 /** Provider options that switch a Workers AI reasoning model's thinking on or off. */
