@@ -1,6 +1,6 @@
 {
   "name": "@rubrion/mastra-cloudflare",
-  "version": "0.3.0",
+  "version": "0.0.0-semantic-release",
   "description": "Mastra agents on Cloudflare Workers: D1 memory, Workers AI and OpenAI-compatible models, and an OpenAI-compatible agent server with multi-agent routing, and opt-in tools: read files, browse the web, background jobs.",
   "license": "GPL-3.0-only",
   "author": "Rubrion",
@@ -56,6 +56,7 @@
   "devDependencies": {
     "@cloudflare/puppeteer": "^1.4.0",
     "@cloudflare/workers-types": "^4.20250918.0",
+    "semantic-release": "^25.0.9",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12"
   },

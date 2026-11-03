@@ -125,6 +125,10 @@ const crawl = jobTools({ name: 'crawl', description: 'Read a list of pages.', in
 
 Never point the browser at logins or captchas.
 
+## Releases
+
+Every push to `main` is released by CI (`.github/workflows/release.yml`, semantic-release): commit messages follow [Conventional Commits](https://www.conventionalcommits.org), and `fix:` publishes a patch, `feat:` a minor, a breaking change (`feat!:` or a `BREAKING CHANGE:` footer) a major. `docs:`, `chore:`, `ci:`, `test:` and `refactor:` publish nothing. npm trusts the workflow (trusted publishing), so there is no token and each version carries provenance. The version lives in git tags (`v0.3.0`) and on npm, not in `package.json`.
+
 ## License
 
 GPL-3.0-only
