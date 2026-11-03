@@ -6,6 +6,7 @@
 - **`defineAgents`**: agents as plain config, built lazily once per isolate (bindings and secrets are only readable inside a request).
 - **`d1Memory`**: Mastra Memory on D1, no vector store to pay for.
 - **`workersAI`**, **`openAICompatible`**, **`providerModel`**: models from Workers AI, any OpenAI-compatible endpoint, or the provider each request carries.
+- **`readFileTool`**, **`browseTool`**, **`jobTools`**: opt-in tools to read attached files, read web pages in a headless browser, and run long work in a Workflow. Each reports what it used, so you can charge whoever asked.
 - Re-exports `Agent`, `createTool`, `z` and `RequestContext`, so a project needs only this package.
 
 The [rubry template](https://github.com/rubrion/rubry) puts it to work: agents plus a middleware with API keys and a settings page.
@@ -99,6 +100,30 @@ providerModel(requestContext, fallback?); // the provider the request carries
 ```
 
 `workersAI` with `thinking` drops `reasoning_effort` from the binding call: Mastra sends the AI SDK's unified `reasoning` option, and reasoning models such as Gemma 4 stop thinking whenever it is present.
+
+## Tools
+
+Opt-in, each with `guard(ctx)` (return a sentence to refuse, e.g. no credit left) and `used(ctx, usage)` (charge whoever asked).
+
+```ts
+import { jobTools, readFileTool, z } from '@rubrion/mastra-cloudflare';
+import { browseTool, readPages } from '@rubrion/mastra-cloudflare/browser'; // needs @cloudflare/puppeteer
+
+// The text of an attached file (PDF, Word, Excel, CSV, HTML, XML, images), via Workers AI's toMarkdown.
+readFileTool({ ai: () => env.AI, load: async (ref, ctx) => ({ name, bytes }) /* or null: not theirs */, maxChars: 20_000 });
+
+// Public pages in a real browser ("browser": { "binding": "BROWSER" }): text and links, up to 3 pages a call.
+// Private addresses, redirects to them and subresources on them are blocked. usage.ms is billed browser time.
+browseTool({ browser: () => env.BROWSER, allow: ['example.com'] /* optional */, used: (ctx, { ms }) => charge(ctx, ms) });
+
+// Long work: start_<name> returns a job id at once, check_<name> waits a little and returns the result.
+// The job id carries a tag of its owner, so only they can check it.
+const crawl = jobTools({ name: 'crawl', description: 'Read a list of pages.', input: z.object({ urls: z.array(z.string()) }),
+	workflow: () => env.CRAWL, owner: (ctx) => String(ctx?.requestContext?.get('visitor')) });
+// and the Workflow: step.do('read', () => readPages(this.env.BROWSER, event.payload.urls))
+```
+
+Never point the browser at logins or captchas.
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "@rubrion/mastra-cloudflare",
-  "version": "0.2.1",
-  "description": "Mastra agents on Cloudflare Workers: D1 memory, Workers AI and OpenAI-compatible models, and an OpenAI-compatible agent server with multi-agent routing.",
+  "version": "0.3.0",
+  "description": "Mastra agents on Cloudflare Workers: D1 memory, Workers AI and OpenAI-compatible models, and an OpenAI-compatible agent server with multi-agent routing, and opt-in tools: read files, browse the web, background jobs.",
   "license": "GPL-3.0-only",
   "author": "Rubrion",
   "repository": {
@@ -25,6 +25,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
     }
   },
   "files": [
@@ -36,7 +40,8 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.74",
@@ -49,10 +54,20 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "@cloudflare/workers-types": "^4.20250918.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "peerDependencies": {
+    "@cloudflare/puppeteer": "^1.4.0"
+  },
+  "peerDependenciesMeta": {
+    "@cloudflare/puppeteer": {
+      "optional": true
+    }
   }
 }
