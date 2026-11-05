@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clip, createAgentServer, defineAgents, gatewayBrowseTool, PROVIDER, fileToMarkdown, jobTools, publicUrl, readFileTool, z, type FileText, type MarkdownAi } from '../src/index';
+import { clip, createAgentServer, defineAgents, gatewayBrowseTool, isSafeKey, PROVIDER, fileToMarkdown, jobTools, publicUrl, r2Source, readFileTool, z, type FileText, type FileView, type MarkdownAi } from '../src/index';
 
 const ctxOf = (values: Record<string, unknown>) => ({ requestContext: { get: (k: string) => values[k] } });
 
@@ -154,5 +154,67 @@ describe('gatewayBrowseTool', () => {
 		fake(429, { error: { message: 'No Rubry credit left' } });
 		expect(await gatewayBrowseTool({ fallback }).execute!({ urls: ['https://example.com'] }, withProvider('https://rubry.ai/api/llm/v1') as never)).toEqual({ error: 'No Rubry credit left' });
 		globalThis.fetch = realFetch;
+	});
+});
+
+describe('read_file navigation and sources', () => {
+	const WORKBOOK = ['# book.xlsx', '## Index', '| GD22 | railway |', '## GD21', '| 2019 | 6420 |', '## GD22', '| Unit | R$ bn |', '| 2023 | 11.39 |', '| 2024 | 14.25 |', '## GD24', '| 2019 | 98 |'].join('\n');
+	const book = ai(WORKBOOK);
+
+	it('lists the headings and reads one sheet, then the lines around a word', async () => {
+		const tool = readFileTool({ ai: () => book, load: async () => ({ name: 'book.xlsx', bytes: new Uint8Array([1]) }) });
+		const sheet = (await tool.execute!({ file: 'k', section: 'gd22' }, ctxOf({}) as never)) as FileView;
+		expect(sheet.headings).toEqual(['book.xlsx', 'Index', 'GD21', 'GD22', 'GD24']);
+		expect(sheet.sectionsFound).toEqual(['GD22']);
+		expect(sheet.markdown).toContain('14.25');
+		expect(sheet.markdown).not.toContain('6420');
+		const line = (await tool.execute!({ file: 'k', section: 'GD22', match: '2024' }, ctxOf({}) as never)) as FileView;
+		expect(line.matches).toBe(1);
+		expect(line.markdown).toContain('4: | 2024 | 14.25 |');
+		expect(line.markdown).not.toContain('GD24');
+	});
+
+	it('keeps the whole document in the cache and cuts only the answer', async () => {
+		const store = new Map<string, FileText>();
+		const tool = readFileTool({
+			ai: () => ai(`## A\n${'x'.repeat(500)}\n## B\nend`),
+			load: async () => ({ name: 'a.pdf', bytes: new Uint8Array([1]), version: 'v1' }),
+			maxChars: 100,
+			cache: { get: async (k) => store.get(k) ?? null, put: async (k, t) => void store.set(k, t) },
+		});
+		const first = (await tool.execute!({ file: 'k' }, ctxOf({}) as never)) as FileView;
+		expect(first.truncated).toBe(true);
+		expect([...store.keys()]).toEqual(['k@v1']);
+		expect((await tool.execute!({ file: 'k', section: 'B' }, ctxOf({}) as never)) as FileView).toMatchObject({ markdown: '## B\nend', truncated: false });
+	});
+
+	it('reads from named sources the model picks', async () => {
+		const tool = readFileTool({
+			ai: () => ai('# Hi'),
+			sources: {
+				attachment: { describe: 'An uploads/ key.', load: async (ref) => (ref.startsWith('uploads/me/') ? { name: 'a.pdf', bytes: new Uint8Array([1]) } : null) },
+				lake: { describe: 'A lake key.', load: async () => ({ name: 'b.csv', bytes: new Uint8Array([1]) }) },
+			},
+		});
+		expect(await tool.execute!({ source: 'attachment', file: 'uploads/other/a.pdf' } as never, ctxOf({}) as never)).toEqual({ error: 'No such file in attachment.' });
+		expect(await tool.execute!({ source: 'lake', file: 'Sources/b.csv' } as never, ctxOf({}) as never)).toMatchObject({ source: 'lake', name: 'b.csv' });
+	});
+});
+
+describe('r2Source', () => {
+	const objects = new Map<string, string>([['uploads/ana/1/a.pdf', 'A'], ['uploads/bob/1/b.pdf', 'B']]);
+	const bucket = {
+		get: async (key: string) => {
+			const v = objects.get(key);
+			return v === undefined ? null : { size: v.length, etag: `e-${key}`, httpMetadata: { contentType: 'application/pdf' }, body: { cancel: async () => {} }, arrayBuffer: async () => new TextEncoder().encode(v).buffer };
+		},
+	} as unknown as R2Bucket;
+	const source = r2Source({ bucket: () => bucket, describe: 'x', folder: (ctx) => `uploads/${ctx?.requestContext?.get('who')}/` });
+
+	it('reads only the caller folder, by exact key, with the etag as version', async () => {
+		expect(await source.load('uploads/ana/1/a.pdf', ctxOf({ who: 'ana' }) as never)).toMatchObject({ name: 'a.pdf', version: 'e-uploads/ana/1/a.pdf' });
+		expect(await source.load('uploads/bob/1/b.pdf', ctxOf({ who: 'ana' }) as never)).toBeNull();
+		expect(await source.load('uploads/ana/../bob/1/b.pdf', ctxOf({ who: 'ana' }) as never)).toBeNull();
+		expect(isSafeKey('/x')).toBe(false);
 	});
 });

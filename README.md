@@ -129,6 +129,34 @@ Never point the browser at logins or captchas.
 
 `read_file` keeps costs where they belong: pictures (alone or inside documents) are not described by an AI model unless `images: true`, since Workers AI bills that; `cache: { get, put }` keeps the converted text (e.g. next to the file in R2) so a file is converted once; and `forgetResults(['read_file', 'browse'])` in an agent's `inputProcessors` sends a file's or page's text only with the turn that read it, not with every message after.
 
+### Reading long files and several sources
+
+`read_file` converts the whole document once (up to `maxDocumentChars`, 2 million by default) and hands back a piece at a time. Every answer lists the document's `headings` (a workbook's sheets, a report's sections); the model then asks for one `section` (e.g. a sheet name) or only the lines around a `match` (a code, a year), and gets at most `maxChars` back. A spreadsheet with hundreds of sheets stays readable.
+
+Files can come from several places; the model picks the `source`:
+
+```ts
+import { r2Cache, r2Source, readFileTool } from '@rubrion/mastra-cloudflare';
+
+readFileTool({
+	ai: () => env.AI,
+	sources: {
+		// The chat's attachments: only the caller's own folder.
+		attachment: r2Source({
+			bucket: () => env.FILES,
+			describe: 'The uploads/… key shown in the message.',
+			folder: (ctx) => `uploads/${(ctx?.requestContext?.get('caller') as { person: string }).person}/`,
+		}),
+		// Shared reference documents, by exact key (the bucket is never listed).
+		docs: r2Source({ bucket: () => env.DOCS, describe: 'A key such as "reports/2026-Q3.pdf".' }),
+		// Anything else: { describe, load: async (ref, ctx) => ({ name, bytes, version }) | null }.
+	},
+	cache: r2Cache(() => env.FILES), // converted once per file version (the R2 etag)
+});
+```
+
+`load` alone (one source) still works as before. A loaded file's `version` (an etag, a sha) keys the cache, so a changed file is converted again. `documentHeadings`, `documentSections`, `matchingLines` and `viewDocument` are exported for tools of your own.
+
 ### Rubry's browser, on Rubry's model
 
 `gatewayBrowseTool({ fallback })` is `browse` through the caller's model provider: when a caller brings its model (X-Provider-* headers) and that provider offers a browser at `<baseURL>/tools/browse`, the pages open there and the caller's user pays. rubry.ai offers one for an agent run on Rubry's model (charged to the visitor's credit), so a published agent can browse without its author paying. Otherwise it runs `fallback` (e.g. `browseTool` on your own binding), or returns an error the model explains.

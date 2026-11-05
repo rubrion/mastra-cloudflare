@@ -9,6 +9,7 @@ import { ToolCallFilter } from '@mastra/core/processors';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { PROVIDER, type ProviderConfig } from './models.js';
+import { viewDocument, type DocumentView } from './documents.js';
 
 /** What a tool's execute gets as its second argument, as far as these tools need. */
 export type ToolCtx = { requestContext?: { get(key: string): unknown } } | undefined;
@@ -64,50 +65,100 @@ export interface FileText {
 	tokens: number;
 }
 
+/** A file as `read_file` returns it: the part asked for, plus the map of the whole document. */
+export interface FileView extends FileText, DocumentView {
+	source?: string;
+}
+
+/** Where a file comes from: the chat's attachments, a bucket, a repository… */
+export interface FileSource {
+	/** One line for the model: what refs look like here, e.g. 'a lake key such as "Sources/x.xlsx"'. */
+	describe: string;
+	/** The file behind `ref`, or null when it does not exist or is not the caller's. `version` (an etag, a sha) keys the cache. */
+	load: (ref: string, ctx: ToolCtx) => Promise<(LoadedFile & { version?: string }) | null>;
+}
+
 export interface ReadFileOptions {
 	ai: (ctx: ToolCtx) => MarkdownAi;
-	/** The file behind a reference the conversation holds (an attachment id, an R2 key); null when it isn't the caller's. */
-	load: (ref: string, ctx: ToolCtx) => Promise<LoadedFile | null>;
+	/** The file behind a reference the conversation holds (an attachment id, an R2 key); null when it isn't the caller's. Shorthand for one source. */
+	load?: (ref: string, ctx: ToolCtx) => Promise<(LoadedFile & { version?: string }) | null>;
+	/** Several places files come from; the model picks one with `source`. Takes the place of `load`. */
+	sources?: Record<string, FileSource>;
 	id?: string;
 	description?: string;
+	/** Longest text handed back per call, after `section` and `match`. Default 20,000. */
 	maxChars?: number;
+	/** Longest document converted and cached whole, so later calls can read any section. Default 2,000,000. */
+	maxDocumentChars?: number;
 	/** Describe pictures with an AI model (billed by Workers AI). Off by default. */
 	images?: boolean;
-	/** Where converted text is kept, so a file is converted once (e.g. next to it in R2). */
+	/** Where converted text is kept, so a file is converted once per version (see r2Cache). */
 	cache?: {
-		get: (ref: string, ctx: ToolCtx) => Promise<FileText | null>;
-		put: (ref: string, text: FileText, ctx: ToolCtx) => Promise<void>;
+		get: (key: string, ctx: ToolCtx) => Promise<FileText | null>;
+		put: (key: string, text: FileText, ctx: ToolCtx) => Promise<void>;
 	};
 	guard?: Allow;
 	used?: (ctx: ToolCtx, usage: { name: string; tokens: number; chars: number; cached: boolean }) => Promise<void> | void;
 }
 
-/** `read_file`: the text of a file the user attached, for the model to work with. */
-export const readFileTool = (o: ReadFileOptions) =>
-	createTool({
+const NAVIGATION =
+	' Every answer lists the document\'s headings (a workbook\'s sheets, a report\'s sections); read a long file in pieces: section to read one of them, match to get only the lines around a word, a code or a year.';
+
+/**
+ * `read_file`: the text of a file as Markdown (PDF, Word, Excel, CSV, HTML, XML…), read a
+ * piece at a time. The whole document is converted once (and cached per version); each
+ * call returns its headings plus the section or the lines asked for, cut to maxChars.
+ */
+export const readFileTool = (o: ReadFileOptions) => {
+	const sources: Record<string, FileSource> = o.sources ?? { file: { describe: 'The attached file reference shown in the conversation.', load: o.load ?? (async () => null) } };
+	const names = Object.keys(sources);
+	if (!names.length) throw new Error('readFileTool: give load or at least one source');
+	const multi = names.length > 1 || Boolean(o.sources);
+	const maxChars = o.maxChars ?? 20_000;
+	const fileText = multi ? `The file reference. ${names.map((n) => `${n}: ${sources[n].describe}`).join(' ')}` : sources[names[0]].describe;
+
+	return createTool({
 		id: o.id ?? 'read_file',
 		description:
-			o.description ??
-			'Read a file the user attached (PDF, Word, Excel, CSV, HTML, XML, image) and get its text as Markdown. Pass the file reference shown in the conversation.',
-		inputSchema: z.object({ file: z.string().min(1).max(300).describe('The attached file reference') }),
-		execute: async ({ file }, ctx) => {
+			(o.description ??
+				(multi
+					? `Read a file (PDF, Word, Excel, CSV, HTML, XML) and get its text as Markdown, from one of these sources: ${names.join(', ')}.`
+					: 'Read a file the user attached (PDF, Word, Excel, CSV, HTML, XML, image) and get its text as Markdown. Pass the file reference shown in the conversation.')) + NAVIGATION,
+		inputSchema: z.object({
+			...(multi ? { source: z.enum(names as [string, ...string[]]).describe('Where the file is.') } : {}),
+			file: z.string().min(1).max(500).describe(fileText),
+			section: z.string().max(200).optional().describe('Read only the section (or sheet) whose heading contains this, e.g. "Summary" or a sheet name.'),
+			match: z.string().max(200).optional().describe('Return only the lines containing this text, with 3 lines around each.'),
+		}),
+		execute: async (input: { source?: unknown; file: string; section?: string; match?: string }, ctx: ToolCtx): Promise<FileView | { error: string }> => {
 			const refused = await o.guard?.(ctx);
 			if (refused) return { error: refused };
-			const kept = await o.cache?.get(file, ctx).catch(() => null);
-			if (kept) {
-				await o.used?.(ctx, { name: kept.name, tokens: kept.tokens, chars: kept.markdown.length, cached: true });
-				return kept;
+			const name = multi && typeof input.source === 'string' ? input.source : names[0];
+			const source = sources[name];
+			if (!source) return { error: `Unknown source "${name}". Use one of: ${names.join(', ')}.` };
+
+			const loaded = await source.load(input.file, ctx).catch(() => null);
+			if (!loaded) return { error: multi ? `No such file in ${name}.` : 'No such file in this conversation.' };
+
+			// The key names the file and its version, so a changed file is converted again.
+			const key = [multi ? `${name}:` : '', input.file, loaded.version ? `@${loaded.version}` : ''].join('');
+			let whole = await o.cache?.get(key, ctx).catch(() => null);
+			const cached = Boolean(whole);
+			if (!whole) {
+				const out = await fileToMarkdown(o.ai(ctx), loaded, o.maxDocumentChars ?? 2_000_000, { images: o.images }).catch(
+					(e: Error) => ({ error: `Could not read ${loaded.name}: ${e.message}` }) as const,
+				);
+				if ('error' in out) return out;
+				whole = out;
+				await o.cache?.put(key, out, ctx).catch(() => undefined);
 			}
-			const loaded = await o.load(file, ctx).catch(() => null);
-			if (!loaded) return { error: 'No such file in this conversation.' };
-			const out = await fileToMarkdown(o.ai(ctx), loaded, o.maxChars, { images: o.images }).catch((e: Error) => ({ error: `Could not read ${loaded.name}: ${e.message}` }) as const);
-			if ('markdown' in out) {
-				await o.cache?.put(file, out, ctx).catch(() => undefined);
-				await o.used?.(ctx, { name: out.name, tokens: out.tokens, chars: out.markdown.length, cached: false });
-			}
-			return out;
+
+			const view = viewDocument(whole.markdown, input, maxChars);
+			await o.used?.(ctx, { name: whole.name, tokens: whole.tokens, chars: view.markdown.length, cached });
+			return { ...whole, ...view, truncated: view.truncated || whole.truncated, ...(multi ? { source: name } : {}) };
 		},
 	});
+};
 
 /**
  * Keeps these tools' results out of the prompt once their turn is over: a file's
