@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clip, createAgentServer, defineAgents, gatewayBrowseTool, isSafeKey, PROVIDER, fileToMarkdown, jobTools, publicUrl, r2Source, readFileTool, z, type FileText, type FileView, type MarkdownAi } from '../src/index';
+import { clip, createAgentServer, defineAgents, gatewayBrowseTool, isSafeKey, PROVIDER, excelDatesToISO, excelSerialToISO, fileToMarkdown, jobTools, publicUrl, r2Source, readFileTool, z, type FileText, type FileView, type MarkdownAi } from '../src/index';
 
 const ctxOf = (values: Record<string, unknown>) => ({ requestContext: { get: (k: string) => values[k] } });
 
@@ -216,5 +216,35 @@ describe('r2Source', () => {
 		expect(await source.load('uploads/bob/1/b.pdf', ctxOf({ who: 'ana' }) as never)).toBeNull();
 		expect(await source.load('uploads/ana/../bob/1/b.pdf', ctxOf({ who: 'ana' }) as never)).toBeNull();
 		expect(isSafeKey('/x')).toBe(false);
+	});
+});
+
+describe('spreadsheet dates', () => {
+	const sheet = [
+		'| DATA | | SÉRIE | ID |',
+		'|------|-|-------|----|',
+		'| 2003 | 1T2003 | 856.47 | 12345 |',
+		...[37622, 37653, 37681, 37712, 37742, 37773, 43709].map((d, i) => `| 2003 | x | ${d} | ${20000 + i * 1000} |`),
+		'| 2004 | y | 512.3 | 27500 |',
+	].join('\n');
+
+	it('turns a monthly serial column into ISO dates and leaves other numbers alone', () => {
+		const out = excelDatesToISO(['| DATA | | SÉRIE |', '|---|---|---|', ...[37622, 37653, 37681, 37712, 37742, 37773, 43709].map((d) => `| 2003 | ${d} | 1.5 |`)].join('\n'));
+		expect(out).toContain('| 2003-01-01 |');
+		expect(out).toContain('| 2019-09-01 |');
+		expect(out).toContain('| 1.5 |');
+		expect(excelSerialToISO(43709)).toBe('2019-09-01');
+	});
+
+	it('does not touch columns that are not dates', () => {
+		// A text cell under the numbers, and a column whose steps are not calendar steps.
+		expect(excelDatesToISO(sheet)).toBe(sheet);
+	});
+
+	it('converts dates of workbooks read with read_file', async () => {
+		const rows = ['## GD13', '| DATA | | SÉRIE |', '|---|---|---|', ...[37622, 37653, 37681, 37712, 37742, 37773].map((d) => `| 2003 | ${d} | 1 |`)].join('\n');
+		const tool = readFileTool({ ai: () => ai(rows), load: async () => ({ name: 'book.xlsx', bytes: new Uint8Array([1]) }) });
+		const out = (await tool.execute!({ file: 'k', section: 'GD13' }, ctxOf({}) as never)) as FileView;
+		expect(out.markdown).toContain('2003-06-01');
 	});
 });

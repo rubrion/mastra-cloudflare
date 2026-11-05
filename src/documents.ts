@@ -95,3 +95,58 @@ export function viewDocument(markdown: string, q: { section?: string; match?: st
 	}
 	return { ...view, markdown: text, truncated };
 }
+
+const SPREADSHEET = /\.(xlsx|xlsm|xlsb|xls|ods|et)$/i;
+const SPREADSHEET_TYPE = /spreadsheet|excel|opendocument\.spreadsheet/i;
+
+/** True for a workbook, by name or MIME type: its dates may come out as Excel serial numbers. */
+export const isSpreadsheet = (file: { name: string; type?: string }) => SPREADSHEET.test(file.name) || SPREADSHEET_TYPE.test(file.type ?? '');
+
+/** An Excel serial day (days since 1899-12-30) as YYYY-MM-DD. */
+export function excelSerialToISO(serial: number): string {
+	return new Date(Date.UTC(1899, 11, 30) + serial * 86_400_000).toISOString().slice(0, 10);
+}
+
+// Steps between consecutive dates that mark a date column: daily, weekly, monthly, quarterly, yearly.
+const DATE_STEPS = [[1, 1], [7, 7], [28, 31], [89, 92], [365, 366]] as const;
+
+/**
+ * Turns the date columns of Markdown tables from Excel serial numbers into ISO dates. A
+ * column counts as dates only when every filled cell is a whole number between 10000 and
+ * 80000 (1927–2119), there are at least 6, they never go down, and the usual step between
+ * them is a day, a week, a month, a quarter or a year. Anything else is left as it is.
+ */
+export function excelDatesToISO(markdown: string): string {
+	const lines = markdown.split('\n');
+	let i = 0;
+	while (i < lines.length) {
+		if (!lines[i].trimStart().startsWith('|')) {
+			i++;
+			continue;
+		}
+		let end = i;
+		while (end < lines.length && lines[end].trimStart().startsWith('|')) end++;
+		const rows = lines.slice(i, end).map((l) => l.split('|'));
+		const width = Math.max(...rows.map((r) => r.length));
+		for (let col = 1; col < width - 1; col++) {
+			const cells = rows.map((r, k) => ({ k, v: (r[col] ?? '').trim() })).filter((c) => c.v !== '' && !/^-+$/.test(c.v));
+			const numbers = cells.filter((c) => /^\d{5}$/.test(c.v)).map((c) => ({ k: c.k, n: Number(c.v) }));
+			if (numbers.length < 6 || numbers.some((c) => c.n < 10_000 || c.n > 80_000)) continue;
+			// Text cells are allowed only above the numbers (the column's header rows).
+			const firstNumber = numbers[0].k;
+			if (cells.some((c) => c.k > firstNumber && !/^\d{5}$/.test(c.v))) continue;
+			const steps = numbers.slice(1).map((c, j) => c.n - numbers[j].n);
+			if (steps.some((d) => d < 0)) continue;
+			const sorted = [...steps].sort((a, b) => a - b);
+			const median = sorted[Math.floor(sorted.length / 2)];
+			if (!DATE_STEPS.some(([lo, hi]) => median >= lo && median <= hi)) continue;
+			for (const { k, n } of numbers) {
+				const cell = rows[k][col];
+				rows[k][col] = cell.replace(String(n), excelSerialToISO(n));
+			}
+		}
+		for (let k = 0; k < rows.length; k++) lines[i + k] = rows[k].join('|');
+		i = end;
+	}
+	return lines.join('\n');
+}

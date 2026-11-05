@@ -9,7 +9,7 @@ import { ToolCallFilter } from '@mastra/core/processors';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { PROVIDER, type ProviderConfig } from './models.js';
-import { viewDocument, type DocumentView } from './documents.js';
+import { excelDatesToISO, isSpreadsheet, viewDocument, type DocumentView } from './documents.js';
 
 /** What a tool's execute gets as its second argument, as far as these tools need. */
 export type ToolCtx = { requestContext?: { get(key: string): unknown } } | undefined;
@@ -149,8 +149,9 @@ export const readFileTool = (o: ReadFileOptions) => {
 					(e: Error) => ({ error: `Could not read ${loaded.name}: ${e.message}` }) as const,
 				);
 				if ('error' in out) return out;
-				whole = out;
-				await o.cache?.put(key, out, ctx).catch(() => undefined);
+				// Workbooks keep dates as serial numbers; the model should not have to do that arithmetic.
+				whole = isSpreadsheet(loaded) ? { ...out, markdown: excelDatesToISO(out.markdown) } : out;
+				await o.cache?.put(key, whole, ctx).catch(() => undefined);
 			}
 
 			const view = viewDocument(whole.markdown, input, maxChars);
